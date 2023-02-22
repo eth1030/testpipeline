@@ -1,0 +1,324 @@
+apiVersion: tekton.dev/v1beta1
+kind: PipelineRun
+metadata:
+  name: boston-housing-pipeline
+  annotations:
+    tekton.dev/output_artifacts: '{"preprocess-data": [{"key": "artifacts/$PIPELINERUN/preprocess-data/x_test.tgz",
+      "name": "preprocess-data-x_test", "path": "/app/x_test.npy"}, {"key": "artifacts/$PIPELINERUN/preprocess-data/x_train.tgz",
+      "name": "preprocess-data-x_train", "path": "/app/x_train.npy"}, {"key": "artifacts/$PIPELINERUN/preprocess-data/y_test.tgz",
+      "name": "preprocess-data-y_test", "path": "/app/y_test.npy"}, {"key": "artifacts/$PIPELINERUN/preprocess-data/y_train.tgz",
+      "name": "preprocess-data-y_train", "path": "/app/y_train.npy"}], "test-model":
+      [{"key": "artifacts/$PIPELINERUN/test-model/mean_squared_error.tgz", "name":
+      "test-model-mean_squared_error", "path": "/app/output.txt"}], "train-model":
+      [{"key": "artifacts/$PIPELINERUN/train-model/model.tgz", "name": "train-model-model",
+      "path": "/app/model.pkl"}]}'
+    tekton.dev/input_artifacts: '{"deploy-model": [{"name": "train-model-model", "parent_task":
+      "train-model"}], "test-model": [{"name": "preprocess-data-x_test", "parent_task":
+      "preprocess-data"}, {"name": "preprocess-data-y_test", "parent_task": "preprocess-data"},
+      {"name": "train-model-model", "parent_task": "train-model"}], "train-model":
+      [{"name": "preprocess-data-x_train", "parent_task": "preprocess-data"}, {"name":
+      "preprocess-data-y_train", "parent_task": "preprocess-data"}]}'
+    tekton.dev/artifact_bucket: mlpipeline
+    tekton.dev/artifact_endpoint: minio-service.kubeflow:9000
+    tekton.dev/artifact_endpoint_scheme: http://
+    tekton.dev/artifact_items: '{"deploy-model": [], "preprocess-data": [["x_test",
+      "$(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/x_test"],
+      ["x_train", "$(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/x_train"],
+      ["y_test", "$(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/y_test"],
+      ["y_train", "$(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/y_train"]],
+      "test-model": [["mean_squared_error", "$(results.mean-squared-error.path)"]],
+      "train-model": [["model", "$(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/model"]]}'
+    sidecar.istio.io/inject: "false"
+    tekton.dev/template: ''
+    pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
+    pipelines.kubeflow.org/pipeline_spec: '{"description": "An example pipeline that
+      trains and logs a regression model.", "name": "Boston Housing Pipeline"}'
+  labels:
+    pipelines.kubeflow.org/pipelinename: ''
+    pipelines.kubeflow.org/generation: ''
+spec:
+  pipelineSpec:
+    tasks:
+    - name: preprocess-data
+      taskSpec:
+        steps:
+        - name: main
+          image: gnovack/boston_pipeline_preprocessing:latest
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: busybox
+          name: copy-results
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            cp /app/x_train.npy $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/x_train;
+            cp /app/x_test.npy $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/x_test;
+            cp /app/y_train.npy $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/y_train;
+            cp /app/y_test.npy $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/y_test;
+        - image: busybox
+          name: output-taskrun-name
+          command:
+          - sh
+          - -ec
+          - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
+        - image: busybox
+          name: copy-results-artifacts
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            TOTAL_SIZE=0
+            copy_artifact() {
+            if [ -d "$1" ]; then
+              tar -czvf "$1".tar.gz "$1"
+              SUFFIX=".tar.gz"
+            fi
+            ARTIFACT_SIZE=`wc -c "$1"${SUFFIX} | awk '{print $1}'`
+            TOTAL_SIZE=$( expr $TOTAL_SIZE + $ARTIFACT_SIZE)
+            touch "$2"
+            if [[ $TOTAL_SIZE -lt 3072 ]]; then
+              if [ -d "$1" ]; then
+                tar -tzf "$1".tar.gz > "$2"
+              elif ! awk "/[^[:print:]]/{f=1} END{exit !f}" "$1"; then
+                cp "$1" "$2"
+              fi
+            fi
+            }
+            copy_artifact $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/x_train $(results.x-train.path)
+            copy_artifact $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/x_test $(results.x-test.path)
+            copy_artifact $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/y_train $(results.y-train.path)
+            copy_artifact $(workspaces.preprocess-data.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/y_test $(results.y-test.path)
+          onError: continue
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        results:
+        - name: taskrun-name
+          type: string
+        - name: x-test
+          type: string
+          description: /app/x_test.npy
+        - name: x-train
+          type: string
+          description: /app/x_train.npy
+        - name: y-test
+          type: string
+          description: /app/y_test.npy
+        - name: y-train
+          type: string
+          description: /app/y_train.npy
+        stepTemplate:
+          volumeMounts:
+          - name: x-train
+            mountPath: /app
+        volumes:
+        - name: x-train
+          emptyDir: {}
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations: {}
+        workspaces:
+        - name: preprocess-data
+      workspaces:
+      - name: preprocess-data
+        workspace: boston-housing-pipeline
+    - name: train-model
+      params:
+      - name: preprocess-data-trname
+        value: $(tasks.preprocess-data.results.taskrun-name)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --x_train
+          - $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(params.preprocess-data-trname)/x_train
+          - --y_train
+          - $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(params.preprocess-data-trname)/y_train
+          image: gnovack/boston_pipeline_train:latest
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: busybox
+          name: copy-results
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            cp /app/model.pkl $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/model;
+        - image: busybox
+          name: output-taskrun-name
+          command:
+          - sh
+          - -ec
+          - echo -n "$(context.taskRun.name)" > "$(results.taskrun-name.path)"
+        - image: busybox
+          name: copy-results-artifacts
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            TOTAL_SIZE=0
+            copy_artifact() {
+            if [ -d "$1" ]; then
+              tar -czvf "$1".tar.gz "$1"
+              SUFFIX=".tar.gz"
+            fi
+            ARTIFACT_SIZE=`wc -c "$1"${SUFFIX} | awk '{print $1}'`
+            TOTAL_SIZE=$( expr $TOTAL_SIZE + $ARTIFACT_SIZE)
+            touch "$2"
+            if [[ $TOTAL_SIZE -lt 3072 ]]; then
+              if [ -d "$1" ]; then
+                tar -tzf "$1".tar.gz > "$2"
+              elif ! awk "/[^[:print:]]/{f=1} END{exit !f}" "$1"; then
+                cp "$1" "$2"
+              fi
+            fi
+            }
+            copy_artifact $(workspaces.train-model.path)/artifacts/$ORIG_PR_NAME/$(context.taskRun.name)/model $(results.model.path)
+          onError: continue
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        params:
+        - name: preprocess-data-trname
+        results:
+        - name: model
+          type: string
+          description: /app/model.pkl
+        - name: taskrun-name
+          type: string
+        stepTemplate:
+          volumeMounts:
+          - name: model
+            mountPath: /app
+        volumes:
+        - name: model
+          emptyDir: {}
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations: {}
+        workspaces:
+        - name: train-model
+      runAfter:
+      - preprocess-data
+      - preprocess-data
+      - preprocess-data
+      workspaces:
+      - name: train-model
+        workspace: boston-housing-pipeline
+    - name: test-model
+      params:
+      - name: preprocess-data-trname
+        value: $(tasks.preprocess-data.results.taskrun-name)
+      - name: train-model-trname
+        value: $(tasks.train-model.results.taskrun-name)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --x_test
+          - $(workspaces.test-model.path)/artifacts/$ORIG_PR_NAME/$(params.preprocess-data-trname)/x_test
+          - --y_test
+          - $(workspaces.test-model.path)/artifacts/$ORIG_PR_NAME/$(params.preprocess-data-trname)/y_test
+          - --model
+          - $(workspaces.test-model.path)/artifacts/$ORIG_PR_NAME/$(params.train-model-trname)/model
+          image: gnovack/boston_pipeline_test:latest
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        - image: busybox
+          name: copy-results
+          command:
+          - sh
+          - -ec
+          - |
+            set -exo pipefail
+            cp /app/output.txt $(results.mean-squared-error.path);
+        params:
+        - name: preprocess-data-trname
+        - name: train-model-trname
+        results:
+        - name: mean-squared-error
+          type: string
+          description: /app/output.txt
+        stepTemplate:
+          volumeMounts:
+          - name: mean-squared-error
+            mountPath: /app
+        volumes:
+        - name: mean-squared-error
+          emptyDir: {}
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations: {}
+        workspaces:
+        - name: test-model
+      runAfter:
+      - train-model
+      - preprocess-data
+      - preprocess-data
+      - train-model
+      workspaces:
+      - name: test-model
+        workspace: boston-housing-pipeline
+    - name: deploy-model
+      params:
+      - name: train-model-trname
+        value: $(tasks.train-model.results.taskrun-name)
+      taskSpec:
+        steps:
+        - name: main
+          args:
+          - --model
+          - $(workspaces.deploy-model.path)/artifacts/$ORIG_PR_NAME/$(params.train-model-trname)/model
+          image: gnovack/boston_pipeline_deploy_model:latest
+          env:
+          - name: ORIG_PR_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.labels['custom.tekton.dev/originalPipelineRun']
+        params:
+        - name: train-model-trname
+        metadata:
+          labels:
+            pipelines.kubeflow.org/cache_enabled: "true"
+          annotations: {}
+        workspaces:
+        - name: deploy-model
+      runAfter:
+      - test-model
+      - train-model
+      workspaces:
+      - name: deploy-model
+        workspace: boston-housing-pipeline
+    workspaces:
+    - name: boston-housing-pipeline
+  workspaces:
+  - name: boston-housing-pipeline
+    volumeClaimTemplate:
+      spec:
+        storageClassName: kfp-csi-s3
+        accessModes:
+        - ReadWriteMany
+        resources:
+          requests:
+            storage: 2Gi
