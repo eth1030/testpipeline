@@ -21,7 +21,7 @@ metadata:
     tekton.dev/template: ''
     pipelines.kubeflow.org/big_data_passing_format: $(workspaces.$TASK_NAME.path)/artifacts/$ORIG_PR_NAME/$TASKRUN_NAME/$TASK_PARAM_NAME
     pipelines.kubeflow.org/pipeline_spec: '{"description": "An example for trusted-ai
-      integration.", "inputs": [{"default": "anonymous", "name": "namespace", "optional":
+      integration.", "inputs": [{"default": "kubeflow", "name": "namespace", "optional":
       true, "type": "String"}, {"default": "0.2", "name": "fgsm_attack_epsilon", "optional":
       true, "type": "String"}, {"default": "PyTorchModel.py", "name": "model_class_file",
       "optional": true, "type": "String"}, {"default": "ThreeLayerCNN", "name": "model_class_name",
@@ -65,7 +65,7 @@ spec:
   - name: model_class_name
     value: ThreeLayerCNN
   - name: namespace
-    value: anonymous
+    value: kubeflow
   - name: nb_classes
     value: '2'
   - name: optimizer
@@ -99,7 +99,7 @@ spec:
     - name: model_class_name
       default: ThreeLayerCNN
     - name: namespace
-      default: anonymous
+      default: kubeflow
     - name: nb_classes
       default: '2'
     - name: optimizer
